@@ -5,7 +5,7 @@ import numpy as np
 
 if __name__ == '__main__':
 
-    data = read_excel(r'C:\Users\Admin\Downloads\pratikum1.xls', sheet_name='Data MMD')
+    data = read_excel(r'polymertools\deconvolution\tests\data\experimental_test_data.xlsx', sheet_name='Data MMD')
 
     deconv = MWDDeconv(active_sites=6, log_m_range=(2.8, 7))
 
