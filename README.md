@@ -1,3 +1,5 @@
+[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/CTO-JKU/polymertools.git/HEAD?urlpath=%2Fdoc%2Ftree%2Fexample_deconv.ipynb)
+
 # Polymertools
 
 **Polymertools** is a Python package designed for the analysis of gel permeation chromatography (GPC) data. 
