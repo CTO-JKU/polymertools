@@ -13,7 +13,7 @@ class _Deconvolution:
 
     _parameter_constraints = {
         "mode": ["mn_free", "mn_fixed"],
-        "active_sites": lambda x: isinstance(x, int) and x > 2,
+        "active_sites": lambda x: isinstance(x, int) and x >= 2,
         "log_m_range": lambda x: x[0] < x[1],
     }
 
@@ -35,7 +35,7 @@ class _Deconvolution:
 
     def _normalize(self, log_m, mmd):
         """Normalize the molar mass distribution."""
-        return -mmd / trapezoid(y=mmd, x=log_m)  # Negative sign to flip the curve (log_m is decreasing)
+        return mmd / abs(trapezoid(y=mmd, x=log_m))
 
     def _compute_initial_guesses(self, active_sites, log_m, mmd):
         """Compute initial guesses for the deconvolution."""
@@ -73,14 +73,28 @@ class _Deconvolution:
         return [1 / np.log10(np.exp(1)) * params[2 * i] * (molar_mass * params[2 * i + 1]) ** 2 * np.exp(
             -molar_mass * params[2 * i + 1]) for i in range(num_param_pairs)]
 
-    def _calculate_averages(self, distributions, average_type='weight'):
-        """Calculate weight or number averages for the distributions."""
-        averages = []
+    def _calculate_weight_fractions(self, distributions):
+        """Compute weight fraction of each active site as its peak area over total cumulative area."""
+        fractions = []
         for distribution in distributions:
+            areas = [trapezoid(dist, x=self.log_m) for dist in distribution]
+            total = sum(areas)
+            fractions.append([a / total for a in areas])
+        return fractions
+
+    def _calculate_averages(self, fitted_params_list, average_type='weight'):
+        """Calculate weight or number averages analytically from fitted τ parameters.
+
+        For Schulz-Flory: Mn = 1/τ, Mw = 2/τ (exact, PDI = 2 by definition).
+        """
+        averages = []
+        for params in fitted_params_list:
+            num_sites = len(params) // 2
+            tau = [params[2 * i + 1] for i in range(num_sites)]
             if average_type == 'weight':
-                averages.append([np.sum(dist * 10 ** self.log_m) / np.sum(dist) for dist in distribution])
+                averages.append([2 / t for t in tau])
             else:
-                averages.append([np.sum(dist) / np.sum(dist / (10 ** self.log_m)) for dist in distribution])
+                averages.append([1 / t for t in tau])
         return averages
 
     def export_deconvolution(self, path="deconvolution_export.xlsx"):
@@ -95,10 +109,12 @@ class _Deconvolution:
                 sheet_name = f'{i + 2} AS'
                 pd.concat([log_m_series, original_mmd_series, df], axis=1).to_excel(writer, sheet_name=sheet_name, index=False)
 
+            padded_weight_fractions = [sublist + [np.nan] * (self.active_sites - len(sublist)) for sublist in self.weight_fractions]
             padded_weight_averages = [sublist + [np.nan] * (self.active_sites - len(sublist)) for sublist in self.weight_averages]
             padded_number_averages = [sublist + [np.nan] * (self.active_sites - len(sublist)) for sublist in self.number_averages]
 
             cols = [f'AS{i+1}' for i in range(self.active_sites)]
+            pd.DataFrame(padded_weight_fractions, columns=cols).to_excel(writer, sheet_name='Weight Fractions', index=False)
             pd.DataFrame(padded_weight_averages, columns=cols).to_excel(writer, sheet_name='Mw', index=False)
             pd.DataFrame(padded_number_averages, columns=cols).to_excel(writer, sheet_name='Mn', index=False)
 
@@ -120,6 +136,7 @@ class MWDDeconv(_Deconvolution):
         self.log_m = None
         self.mmd = None
         self.deconvoluted_distributions = None
+        self.weight_fractions = None
         self.number_averages = None
         self.weight_averages = None
 
@@ -152,13 +169,16 @@ class MWDDeconv(_Deconvolution):
         guesses = self._compute_initial_guesses(self.active_sites, log_m, mmd)
 
         self.deconvoluted_distributions = []
+        self._fitted_params = []
         for guess in guesses:
-            popt = curve_fit(self._flory_schulz_cumulative, 10 ** log_m, mmd_normalized, p0=guess,
-                             bounds=self._compute_bounds(*self.log_m_range, len(guess)))
-            self.deconvoluted_distributions.append(self._flory_schulz_single_sites(10 ** log_m, *popt[0]))
+            popt, _ = curve_fit(self._flory_schulz_cumulative, 10 ** log_m, mmd_normalized, p0=guess,
+                                bounds=self._compute_bounds(*self.log_m_range, len(guess)))
+            self._fitted_params.append(popt)
+            self.deconvoluted_distributions.append(self._flory_schulz_single_sites(10 ** log_m, *popt))
 
-        self.number_averages = self._calculate_averages(self.deconvoluted_distributions, average_type='number')
-        self.weight_averages = self._calculate_averages(self.deconvoluted_distributions, average_type='weight')
+        self.weight_fractions = self._calculate_weight_fractions(self.deconvoluted_distributions)
+        self.number_averages = self._calculate_averages(self._fitted_params, average_type='number')
+        self.weight_averages = self._calculate_averages(self._fitted_params, average_type='weight')
 
         self.fitted = True
         return self
@@ -194,3 +214,4 @@ class MWDDeconv(_Deconvolution):
 
     def __repr__(self):
         return f"mode={self.mode}, active_sites={self.active_sites}"
+    
